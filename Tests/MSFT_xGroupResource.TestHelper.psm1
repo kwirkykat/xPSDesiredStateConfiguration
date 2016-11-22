@@ -1,21 +1,18 @@
-﻿Import-Module -Name (Join-Path -Path (Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'DSCResources') -ChildPath 'CommonResourceHelper.psm1')
+﻿$errorActionPreference = 'Stop'
+Set-StrictMode -Version 'Latest'
+
+#Import CommonResourceHelper for Test-IsNanoServer
+$moduleRootFilePath = Split-Path -Path $PSScriptRoot -Parent
+$dscResourcesFolderFilePath = Join-Path -Path $moduleRootFilePath -ChildPath 'DSCResources'
+$commonResourceHelperFilePath = Join-Path -Path $dscResourcesFolderFilePath -ChildPath 'CommonResourceHelper.psm1'
+Import-Module -Name $commonResourceHelperFilePath
 
 <#
     .SYNOPSIS
         Determines if a Windows group exists.
 
-    .DESCRIPTION
-        This function determines if a Windows group exists on a local or remote machine.
-
     .PARAMETER GroupName
         The name of the group to test.
-
-    .PARAMETER ComputerName
-        The optional name of the computer to check.
-        The default value is the local machine.
-
-    .NOTES
-        For remote machines, the currently logged on user must have rights to enumerate groups.
 #>
 function Test-GroupExists
 {
@@ -25,11 +22,7 @@ function Test-GroupExists
     (
         [Parameter(Mandatory = $true)]
         [String]
-        $GroupName,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $GroupName
     )
 
     if (Test-IsNanoServer)
@@ -40,46 +33,14 @@ function Test-GroupExists
     {
         return Test-GroupExistsOnFullSKU @PSBoundParameters
     }
-
-    if (Test-IsNanoServer)
-    {
-        # Try to find a group by its name.
-        try
-        {
-            $null = Get-LocalGroup -Name $GroupName -ErrorAction Stop
-            return $true
-        }
-        catch [System.Exception]
-        {
-            if ($_.CategoryInfo.ToString().Contains('GroupNotFoundException'))
-            {
-                # A group with the provided name does not exist.
-                return $false
-            }
-            throw $_.Exception
-        }
-    }
-    else
-    {
-        return [ADSI]::Exists("WinNT://$env:ComputerName/$GroupName,group")
-    }
 }
 
 <#
     .SYNOPSIS
-        Determines if a Windows group exists.
-
-    .DESCRIPTION
-        This function determines if a Windows group exists on a local or remote machine.
+        Determines if a Windows group exists on a full server.
 
     .PARAMETER GroupName
         The name of the group to test.
-
-    .PARAMETER ComputerName
-        The optional name of the computer to check. Omit to check for the group on the local machine.
-
-    .NOTES
-        For remote machines, the currently logged on user must have rights to enumerate groups.
 #>
 function Test-GroupExistsOnFullSKU
 {
@@ -90,20 +51,14 @@ function Test-GroupExistsOnFullSKU
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()]
         [String]
-        $GroupName,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $GroupName
     )
 
-    Set-StrictMode -Version 'Latest'
-
-    $adsiComputerEntry = [ADSI] "WinNT://$ComputerName"
+    $adsiComputerEntry = [ADSI] "WinNT://$env:computerName"
 
     foreach ($adsiComputerEntryChild in $adsiComputerEntry.Children)
     {
-        if ($adsiComputerEntryChild.Path -like "WinNT://*$ComputerName/$GroupName")
+        if ($adsiComputerEntryChild.Path -like "WinNT://*$env:computerName/$GroupName")
         {
             return $true
         }
@@ -114,16 +69,10 @@ function Test-GroupExistsOnFullSKU
 
 <#
     .SYNOPSIS
-        Determines if a Windows group exists.
-
-    .DESCRIPTION
-        This function determines if a Windows group exists on a local or remote machine.
+        Determines if a Windows group exists on a Nano server
 
     .PARAMETER GroupName
         The name of the group to test.
-
-    .PARAMETER ComputerName
-        This parameter should not be used on NanoServer.
 #>
 function Test-GroupExistsOnNanoServer
 {
@@ -134,64 +83,38 @@ function Test-GroupExistsOnNanoServer
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()]
         [String]
-        $GroupName,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $GroupName
     )
-
-    Set-StrictMode -Version 'Latest'
-
-    if ($PSBoundParameters.ContainsKey('ComputerName'))
-    {
-        if (-not (Test-IsLocalMachine -Scope $ComputerName))
-        {
-            throw 'Do not specify ComputerName when running on NanoServer unless it is the local machine.'
-        }
-    }
 
     try
     {
-        Get-LocalGroup -Name $GroupName -ErrorAction Stop | Out-Null
-        return $true
+        $null = Get-LocalGroup -Name $GroupName -ErrorAction 'Stop'
     }
     catch [System.Exception]
     {
-        if ($_.CategoryInfo.ToString().Contains('GroupNotFoundException'))
-        {
-            return $false
-        }
-        else
+        if (-not $_.CategoryInfo.ToString().Contains('GroupNotFoundException'))
         {
             throw $_.Exception
         }
+
+        return $false
     }
 
-    return $false
+    return $true
 }
 
 <#
     .SYNOPSIS
-        Creates a Windows group
-
-    .DESCRIPTION
-        This function creates a Windows group on the local or remote machine.
+        Creates a Windows group.
 
     .PARAMETER GroupName
-        The name of the group to create
+        The name of the group.
 
     .PARAMETER Description
-        The optional description to set for the group.
+        The description of the group.
 
-    .PARAMETER MemberUserNames
-        The usernames of the optional members to add to the group.
-
-    .PARAMETER ComputerName
-        The optional name of the computer to update. Omit to create the group on the local machine.
-
-    .NOTES
-        For remote machines, the currently logged on user must have rights to create a group.
+    .PARAMETER Members
+        The usernames of the members to add to the group.
 #>
 function New-Group
 {
@@ -203,18 +126,14 @@ function New-Group
         [String]
         $GroupName,
 
+        [Parameter()]
         [String]
         $Description,
 
+        [Parameter()]
         [String[]]
-        $MemberUserNames,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $Members
     )
-
-    Set-StrictMode -Version 'Latest'
 
     if (Test-IsNanoServer)
     {
@@ -228,25 +147,16 @@ function New-Group
 
 <#
     .SYNOPSIS
-        Creates a Windows group on a full server
-
-    .DESCRIPTION
-        This function creates a Windows group on the local or remote full server machine.
+        Creates a Windows group on a full server.
 
     .PARAMETER GroupName
-        The name of the group to create
+        The name of the group.
 
     .PARAMETER Description
-        The optional description to set for the group.
+        The description of the group.
 
-    .PARAMETER MemberUserNames
-        The usernames of the optional members to add to the group.
-
-    .PARAMETER ComputerName
-        The optional name of the computer to update. Omit to create the group on the local machine.
-
-    .NOTES
-        For remote machines, the currently logged on user must have rights to create a group.
+    .PARAMETER Members
+        The usernames of the members to add to the group.
 #>
 function New-GroupOnFullSKU
 {
@@ -258,64 +168,53 @@ function New-GroupOnFullSKU
         [String]
         $GroupName,
 
+        [Parameter()]
         [String]
         $Description,
 
+        [Parameter()]
         [String[]]
-        $MemberUserNames,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $Members
     )
-
-    Set-StrictMode -Version 'Latest'
-
-    $adsiComputerEntry = [ADSI] "WinNT://$ComputerName"
 
     if (Test-GroupExists -GroupName $GroupName)
     {
-        Remove-Group -GroupName $GroupName -ComputerName $ComputerName
+        throw "Group $GroupName already exists."
     }
 
+    $adsiComputerEntry = [ADSI] "WinNT://$env:computerName"
     $adsiGroupEntry = $adsiComputerEntry.Create('Group', $GroupName)
 
     if ($PSBoundParameters.ContainsKey('Description'))
     {
-        $adsiGroupEntry.Put('Description', $Description) | Out-Null
+        $null = $adsiGroupEntry.Put('Description', $Description)
     }
 
-    $adsiGroupEntry.SetInfo() | Out-Null
+    $null = $adsiGroupEntry.SetInfo()
 
-    if ($PSBoundParameters.ContainsKey("MemberUserNames"))
+    if ($PSBoundParameters.ContainsKey("Members"))
     {
-        $adsiGroupEntry = [ADSI]"WinNT://$ComputerName/$GroupName,group"
+        $adsiGroupEntry = [ADSI]"WinNT://$env:computerName/$GroupName,group"
 
-        foreach ($memberUserName in $MemberUserNames)
+        foreach ($memberUserName in $Members)
         {
-            $adsiGroupEntry.Add("WinNT://$ComputerName/$memberUserName") | Out-Null
+            $null = $adsiGroupEntry.Add("WinNT://$env:computerName/$memberUserName")
         }
     }
 }
 
 <#
     .SYNOPSIS
-        Creates a Windows group on a Nano server
-
-    .DESCRIPTION
-        This function creates a Windows group on the local Nano server machine.
+        Creates a Windows group on a Nano server.
 
     .PARAMETER GroupName
-        The name of the group to create
+        The name of the group.
 
     .PARAMETER Description
-        The optional description to set for the group.
+        The description of the group.
 
-    .PARAMETER MemberUserNames
-        The usernames of the optional members to add to the group.
-
-    .PARAMETER ComputerName
-        This parameter should not be used on a Nano server.
+    .PARAMETER Members
+        The usernames of the members to add to the group.
 #>
 function New-GroupOnNanoServer
 {
@@ -327,55 +226,39 @@ function New-GroupOnNanoServer
         [String]
         $GroupName,
 
+        [Parameter()]
         [String]
         $Description,
 
+        [Parameter()]
         [String[]]
-        $MemberUserNames,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $Members
     )
-
-    Set-StrictMode -Version 'Latest'
-
-    if ($PSBoundParameters.ContainsKey('ComputerName'))
-    {
-        if (-not (Test-IsLocalMachine -Scope $ComputerName))
-        {
-            throw 'Do not specify ComputerName when running on NanoServer unless it is the local machine.'
-        }
-    }
 
     if (Test-GroupExists -GroupName $GroupName)
     {
-        Remove-LocalGroup -Name $GroupName -ErrorAction SilentlyContinue
+        throw "Group $GroupName already exists."
     }
 
-    New-LocalGroup -Name $GroupName
+    $null = New-LocalGroup -Name $GroupName
 
     if ($PSBoundParameters.ContainsKey('Description'))
     {
-        Set-LocalGroup -Name $GroupName -Description $Description
+        $null = Set-LocalGroup -Name $GroupName -Description $Description
     }
 
-    if ($PSBoundParameters.ContainsKey('MemberUserNames'))
+    if ($PSBoundParameters.ContainsKey('Members'))
     {
-        Add-LocalGroupMember -Name $GroupName -Member $Members
+        $null = Add-LocalGroupMember -Name $GroupName -Member $Members
     }
 }
 
 <#
     .SYNOPSIS
-        Deletes a user group.
+        Deletes a Windows group.
 
     .PARAMETER GroupName
-        The name of the user group to delete.
-
-    .PARAMETER ComputerName
-        The optional name of the computer to update.
-        The default value is the local machine.
+        The name of the group.
 #>
 function Remove-Group
 {
@@ -385,11 +268,7 @@ function Remove-Group
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()]
         [String]
-        $GroupName,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $GroupName
     )
 
     if (Test-IsNanoServer)
@@ -404,14 +283,10 @@ function Remove-Group
 
 <#
     .SYNOPSIS
-        Deletes a local user group on a full server.
+        Deletes a Windows group on a full server.
 
     .PARAMETER GroupName
-        The name of the local user group to delete.
-
-    .PARAMETER ComputerName
-        The optional name of the computer to update.
-        The default value is the local machine.
+        The name of the group.
 #>
 function Remove-GroupOnFullSKU
 {
@@ -421,33 +296,27 @@ function Remove-GroupOnFullSKU
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()]
         [String]
-        $GroupName,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $GroupName
     )
 
-    Set-StrictMode -Version 'Latest'
-
-    $adsiComputerEntry = [ADSI]"WinNT://$ComputerName"
+    $adsiComputerEntry = [ADSI]"WinNT://$env:computerName"
 
     if (Test-GroupExists -GroupName $GroupName)
     {
-        $adsiComputerEntry.Delete('Group', $GroupName) | Out-Null
+        $null = $adsiComputerEntry.Delete('Group', $GroupName)
+    }
+    else
+    {
+        throw "Group $GroupName does not exist to remove."
     }
 }
 
 <#
     .SYNOPSIS
-        Deletes a local user group on a Nano server.
+        Deletes a Windows group on a Nano server.
 
     .PARAMETER GroupName
-        The name of the local user group to delete.
-
-    .PARAMETER ComputerName
-        This parameter should not be used on NanoServer.
-        The default value is the local machine.
+        The name of the group.
 #>
 function Remove-GroupOnNanoServer
 {
@@ -457,30 +326,17 @@ function Remove-GroupOnNanoServer
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()]
         [String]
-        $GroupName,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $ComputerName = $env:computerName
+        $GroupName
     )
-
-    Set-StrictMode -Version 'Latest'
-
-    if ($PSBoundParameters.ContainsKey('ComputerName'))
-    {
-        if (-not (Test-IsLocalMachine -Scope $ComputerName))
-        {
-            throw 'Do not specify ComputerName when running on NanoServer unless it is the local machine.'
-        }
-    }
 
     if (Test-GroupExists -GroupName $GroupName)
     {
         Remove-LocalGroup -Name $GroupName
     }
+    else
+    {
+        throw "Group $GroupName does not exist to remove."
+    }
 }
 
-Export-ModuleMember -Function `
-    New-Group, `
-    Remove-Group, `
-    Test-GroupExists
+Export-ModuleMember -Function @( 'New-Group', 'Remove-Group', 'Test-GroupExists' )

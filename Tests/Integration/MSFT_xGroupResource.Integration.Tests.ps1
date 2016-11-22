@@ -1,7 +1,13 @@
 ﻿[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingConvertToSecureStringWithPlainText", "")]
 param ()
 
-Import-Module -Name (Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'CommonTestHelper.psm1')
+$errorActionPreference = 'Stop'
+Set-StrictMode -Version 'Latest'
+
+# Import CommonTestHelper for Enter-DscResourceTestEnvironment, Exit-DscResourceTestEnvironment
+$script:testsFolderFilePath = Split-Path $PSScriptRoot -Parent
+$script:commonTestHelperFilePath = Join-Path -Path $testsFolderFilePath -ChildPath 'CommonTestHelper.psm1'
+Import-Module -Name $commonTestHelperFilePath
 
 $script:testEnvironment = Enter-DscResourceTestEnvironment `
     -DscResourceModuleName 'xPSDesiredStateConfiguration' `
@@ -12,7 +18,9 @@ try
 {
     Describe 'xGroup Integration Tests'  {
         BeforeAll {
-            Import-Module -Name (Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'MSFT_xGroupResource.TestHelper.psm1')
+            # Import xGroup Test Helper for TestGroupExists, New-Group, Remove-Group
+            $groupTestHelperFilePath = Join-Path -Path $script:testsFolderFilePath -ChildPath 'MSFT_xGroupResource.TestHelper.psm1'
+            Import-Module -Name $groupTestHelperFilePath
 
             $script:confgurationWithMembersFilePath = Join-Path -Path $PSScriptRoot -ChildPath 'MSFT_xGroupResource_Members.config.ps1'
             $script:confgurationWithMembersToIncludeExcludeFilePath = Join-Path -Path $PSScriptRoot -ChildPath 'MSFT_xGroupResource_MembersToIncludeExclude.config.ps1'
@@ -161,7 +169,7 @@ try
 
             Test-GroupExists -GroupName $testGroupName | Should Be $false
 
-            New-Group -GroupName $testGroupName -MemberUserNames @( $username1 )
+            New-Group -GroupName $testGroupName -Members @( $username1 )
 
             Test-GroupExists -GroupName $testGroupName | Should Be $true
 
@@ -183,6 +191,40 @@ try
                 }
 
                 Remove-User -UserName $username1
+            }
+        }
+
+        It 'Should remove a group' {
+            $configurationName = 'RemoveGroup'
+            $testGroupName = 'TestRemoveGroup1'
+
+            $resourceParameters = @{
+                Ensure = 'Absent'
+                GroupName = $testGroupName
+            }
+
+            Test-GroupExists -GroupName $testGroupName | Should Be $false
+
+            New-Group -GroupName $testGroupName
+
+            Test-GroupExists -GroupName $testGroupName | Should Be $true
+
+            try
+            {
+                { 
+                    . $script:confgurationWithMembersFilePath -ConfigurationName $configurationName
+                    & $configurationName -OutputPath $TestDrive @resourceParameters
+                    Start-DscConfiguration -Path $TestDrive -ErrorAction 'Stop' -Wait -Force
+                } | Should Not Throw
+
+                Test-GroupExists -GroupName $testGroupName | Should Be $false
+            }
+            finally
+            {
+                if (Test-GroupExists -GroupName $testGroupName)
+                {
+                    Remove-Group -GroupName $testGroupName
+                }
             }
         }
     }
